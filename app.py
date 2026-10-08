@@ -7,11 +7,9 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# User Agent Definition
 USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
 def get_cookies_list():
-    """cookies.txt ফাইল থেকে সব কুকি রিড করে লিস্ট আকারে রিটার্ন করে"""
     if not os.path.exists("cookies.txt"):
         return []
     with open("cookies.txt", "r", encoding="utf-8") as f:
@@ -19,7 +17,6 @@ def get_cookies_list():
     return cookies
 
 def do_follow(target_url, cookie_str):
-    """সরাসরি ফেসবুক পেজ/প্রোফাইল ফলো করার ফাংশন"""
     session = requests.Session()
     headers = {
         "User-Agent": USER_AGENT,
@@ -27,12 +24,12 @@ def do_follow(target_url, cookie_str):
         "Cookie": cookie_str
     }
     try:
-        # mbasic ভার্সনে রিকোয়েস্ট পাঠানো
+        # mbasic ভার্সনে প্রোফাইল রিড করা
         clean_url = target_url.replace("www.facebook.com", "mbasic.facebook.com").replace("m.facebook.com", "mbasic.facebook.com")
-        res = session.get(clean_url, headers=headers, timeout=10)
+        res = session.get(clean_url, headers=headers, timeout=15)
         soup = bs(res.text, "html.parser")
         
-        # ফলো বাটন খুঁজে বের করা (Ikuti / Follow / Subscribe)
+        # ফলো / সাবস্ক্রাইব লিংক খোঁজা
         follow_link = None
         for a in soup.find_all("a", href=True):
             href = a["href"]
@@ -43,7 +40,27 @@ def do_follow(target_url, cookie_str):
         if follow_link:
             if not follow_link.startswith("http"):
                 follow_link = "https://mbasic.facebook.com" + follow_link
-            session.get(follow_link, headers=headers, timeout=10)
+            
+            # ফলো পেজে হিট করা
+            follow_res = session.get(follow_link, headers=headers, timeout=15)
+            
+            # যদি সরাসরি ফলো না হয়ে কনফার্মেশন বা টোকেন চায়
+            if "fb_dtsg" in follow_res.text:
+                follow_soup = bs(follow_res.text, "html.parser")
+                fb_dtsg = follow_soup.find("input", {"name": "fb_dtsg"})
+                jazoest = follow_soup.find("input", {"name": "jazoest"})
+                form = follow_soup.find("form", action=True)
+                
+                if fb_dtsg and form:
+                    post_data = {
+                        "fb_dtsg": fb_dtsg.get("value", ""),
+                        "jazoest": jazoest.get("value", "") if jazoest else ""
+                    }
+                    action_url = form["action"]
+                    if not action_url.startswith("http"):
+                        action_url = "https://mbasic.facebook.com" + action_url
+                    session.post(action_url, data=post_data, headers=headers, timeout=15)
+            
             return True
         return False
     except Exception as e:
@@ -54,7 +71,6 @@ def home():
     total_cookies = len(get_cookies_list())
     return jsonify({
         "status": "online",
-        "message": "Facebook Auto-Follow API Service is Running",
         "total_loaded_cookies": total_cookies
     })
 
@@ -65,13 +81,12 @@ def execute_follow():
         return jsonify({"status": "error", "message": "Target 'url' is required"}), 400
         
     target_url = data.get("url")
-    count = int(data.get("count", 10)) # ডিফল্ট ১০টি ফলো রিকোয়েস্ট পাঠাবে
+    count = int(data.get("count", 1))
     
     cookies = get_cookies_list()
     if not cookies:
         return jsonify({"status": "error", "message": "No cookies found in cookies.txt"}), 500
         
-    # র‍্যান্ডম বা ক্রমানুসারে কুকি বাছাই
     selected_cookies = random.sample(cookies, min(count, len(cookies)))
     success_count = 0
     
